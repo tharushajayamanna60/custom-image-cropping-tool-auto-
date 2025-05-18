@@ -1,0 +1,284 @@
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auto-Cropping Tool</title>
+  <script src="tailwindcss.js"></script>
+<link href='css2.css' rel='stylesheet'>
+  <link href="https://unpkg.com/cropperjs/dist/cropper.css" rel="stylesheet">
+  <script src="cropper.js"></script>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    .point {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      position: absolute;
+      cursor: pointer;
+      border: 2px solid white;
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+    }
+    #previewCanvas {
+      display: none;
+      margin-top: 20px;
+      border: 1px solid #ccc;
+    }
+    #colorPalette {
+      display: none;
+      position: absolute;
+      background-color: rgba(255, 255, 255, 0.8);
+      padding: 10px;
+      border-radius: 5px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+      z-index: 10;
+      margin-top: 10px;
+      max-width: 200px;
+      overflow-y: auto;
+      max-height: 150px;
+    }
+    #colorPalette .color-box {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      margin: 5px;
+      cursor: pointer;
+      display: inline-block;
+      border: 1px solid #ccc;
+    }
+    #colorPalette .color-box.selected {
+      border: 2px solid blue;
+      box-shadow: 0 0 5px blue;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 p-8">
+  <div class="container mx-auto bg-white rounded-lg shadow-md p-8">
+    <h1 class="text-2xl font-semibold text-blue-600 mb-6 text-center">Auto-Cropping Tool</h1>
+
+    <div class="mb-6">
+      <label for="imageUpload"
+        class="inline-flex items-center justify-center px-5 py-3 bg-blue-600 text-white font-medium rounded-md shadow-md cursor-pointer hover:bg-blue-700 transition">
+        <svg class="mr-2 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-1-11l-5-5m0 0l-5 5m5-5v12">
+          </path>
+        </svg>
+        <span>Upload Image</span>
+        <input type="file" id="imageUpload" accept="image/*" class="hidden">
+      </label>
+      <p id="file-name" class="mt-2 text-sm text-gray-500"></p>
+      <p id="file-error" class="mt-2 text-sm text-red-500"></p>
+    </div>
+
+    <div class="relative" id="imageContainer" style="display: none;">
+      <img id="uploadedImage" src="#" alt="Uploaded Image" class="max-w-full rounded-md shadow-lg">
+      <canvas id="overlayCanvas" class="absolute top-0 left-0"></canvas>
+      <div id="colorPalette"></div>
+    </div>
+
+    <div class="flex justify-center mt-6 space-x-4">
+      <button id="cropButton" class="px-6 py-3 bg-green-500 text-white font-medium rounded-md shadow-md hover:bg-green-600 transition" style="display: none;">
+        Crop Image
+      </button>
+      <button id="resetButton" class="px-6 py-3 bg-yellow-500 text-white font-medium rounded-md shadow-md hover:bg-yellow-600 transition" style="display: none;">
+        Reset
+      </button>
+    </div>
+
+    <canvas id="previewCanvas" class="mt-6 mx-auto rounded-md shadow-md"></canvas>
+  </div>
+
+  <script>
+    const imageUpload = document.getElementById('imageUpload');
+    const uploadedImage = document.getElementById('uploadedImage');
+    const imageContainer = document.getElementById('imageContainer');
+    const cropButton = document.getElementById('cropButton');
+    const resetButton = document.getElementById('resetButton');
+    const overlayCanvas = document.getElementById('overlayCanvas');
+    const ctx = overlayCanvas.getContext('2d');
+    const points = [];
+    const fileNameDisplay = document.getElementById('file-name');
+    const fileErrorDisplay = document.getElementById('file-error');
+    const previewCanvas = document.getElementById('previewCanvas');
+    const previewCtx = previewCanvas.getContext('2d');
+    const colorPalette = document.getElementById('colorPalette');
+    let selectedColor = 'red';
+    let cropper = null;
+    let colorPickerActive = false;
+
+    const predefinedColors = [
+      'red', 'green', 'blue', 'yellow', 'orange', 'purple', 'pink', 'black', 'white',
+      '#FF6B6B', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'
+    ];
+
+    imageUpload.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        if (!file.type.startsWith('image/')) {
+          fileErrorDisplay.textContent = 'Please upload a valid image file.';
+          resetInput();
+          return;
+        }
+        fileErrorDisplay.textContent = '';
+        fileNameDisplay.textContent = `Selected file: ${file.name}`;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          uploadedImage.src = e.target.result;
+          imageContainer.style.display = 'block';
+          cropButton.style.display = 'inline-block';
+          resetButton.style.display = 'inline-block';
+          points.length = 0;
+          redrawCanvas();
+          if (cropper) cropper.destroy();
+          cropper = null;
+          colorPickerActive = false;
+          colorPalette.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+      } else {
+        resetInput();
+      }
+    });
+
+    uploadedImage.onload = () => {
+      overlayCanvas.width = uploadedImage.width;
+      overlayCanvas.height = uploadedImage.height;
+      overlayCanvas.style.width = uploadedImage.width + "px";
+      overlayCanvas.style.height = uploadedImage.height + "px";
+      redrawCanvas();
+      setupColorPalette();
+    };
+
+    function setupColorPalette() {
+      colorPalette.innerHTML = '';
+      predefinedColors.forEach(color => {
+        const colorBox = document.createElement('div');
+        colorBox.className = 'color-box';
+        colorBox.style.backgroundColor = color;
+        if (color === selectedColor) colorBox.classList.add('selected');
+        colorBox.addEventListener('click', () => {
+          selectedColor = color;
+          updateSelectedColorDisplay(color);
+          redrawCanvas();
+          colorPickerActive = false;
+          colorPalette.style.display = 'none';
+        });
+        colorPalette.appendChild(colorBox);
+      });
+    }
+
+    function updateSelectedColorDisplay(color) {
+      const colorBoxes = colorPalette.querySelectorAll('.color-box');
+      colorBoxes.forEach(box => {
+        box.classList.remove('selected');
+        if (box.style.backgroundColor === color) {
+          box.classList.add('selected');
+        }
+      });
+    }
+
+    overlayCanvas.addEventListener('click', (event) => {
+      const rect = overlayCanvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      if (colorPickerActive && event.target.classList.contains('color-box')) return;
+      if (colorPickerActive) {
+        colorPalette.style.display = 'none';
+        colorPickerActive = false;
+      }
+      points.push({ x, y, color: selectedColor });
+      redrawCanvas();
+    });
+
+    function redrawCanvas() {
+      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      points.forEach(p => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5, 0, 2 * Math.PI);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+      });
+      if (points.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+        ctx.fill();
+      }
+    }
+
+    cropButton.addEventListener('click', () => {
+      if (points.length < 3) {
+        alert('Please mark at least three points.');
+        return;
+      }
+
+      const canvas = document.createElement('canvas');
+      const cctx = canvas.getContext('2d');
+
+      let minX = Math.min(...points.map(p => p.x));
+      let minY = Math.min(...points.map(p => p.y));
+      let maxX = Math.max(...points.map(p => p.x));
+      let maxY = Math.max(...points.map(p => p.y));
+
+      const width = maxX - minX;
+      const height = maxY - minY;
+
+      canvas.width = width;
+      canvas.height = height;
+
+      cctx.beginPath();
+      cctx.moveTo(points[0].x - minX, points[0].y - minY);
+      for (let i = 1; i < points.length; i++) {
+        cctx.lineTo(points[i].x - minX, points[i].y - minY);
+      }
+      cctx.closePath();
+
+      cctx.save();
+      cctx.clip();
+      cctx.drawImage(uploadedImage, minX, minY, width, height, 0, 0, width, height);
+      cctx.restore();
+
+      previewCanvas.width = width;
+      previewCanvas.height = height;
+      previewCtx.clearRect(0, 0, width, height);
+      previewCtx.drawImage(canvas, 0, 0);
+      previewCanvas.style.display = 'block';
+
+      if (cropper) cropper.destroy();
+      cropper = new Cropper(previewCanvas, {
+        aspectRatio: NaN,
+        viewMode: 1,
+        autoCropArea: 1,
+      });
+    });
+
+    resetButton.addEventListener('click', () => {
+      imageUpload.value = '';
+      fileNameDisplay.textContent = '';
+      imageContainer.style.display = 'none';
+      cropButton.style.display = 'none';
+      resetButton.style.display = 'none';
+      uploadedImage.src = '';
+      points.length = 0;
+      redrawCanvas();
+      previewCanvas.style.display = 'none';
+      if (cropper) cropper.destroy();
+      cropper = null;
+    });
+  </script>
+</body>
+</html>
